@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# IDE
+.vscode/
+.idea/
+
+# Data (don't commit cached data)
+data/btc_*.csv
+
+# OS
+.DS_Store
+Thumbs.db

@@ -2,6 +2,7 @@
 """
 TradingView Bot - Main Orchestrator
 Coordinates scraping, conversion, and backtesting
+Enhanced with multiple strategies and timeframes
 """
 
 import os
@@ -13,9 +14,10 @@ from datetime import datetime
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from scrapers.tv_scraper import get_indicators, save_indicators
-from converters.pine_converter import convert_pine_to_python
-from backtests.backtester import fetch_btc_data, run_backtest, save_results
+from backtests.backtester import (
+    fetch_btc_data, calculate_indicators, run_strategy, run_all_strategies,
+    STRATEGIES, save_results, test_timeframes, run_with_risk_management
+)
 
 # Configuration
 CONFIG = {
@@ -26,126 +28,182 @@ CONFIG = {
     "max_indicators": 100,
 }
 
-def load_indicators():
-    """Load cached indicators or scrape new ones"""
-    indicators_file = "data/indicators.json"
-    
-    if os.path.exists(indicators_file):
-        with open(indicators_file, "r") as f:
-            indicators = json.load(f)
-        print(f"Loaded {len(indicators)} indicators from cache")
-        return indicators
-    else:
-        print("Scraping new indicators...")
-        return get_indicators()
 
-def process_indicator(indicator):
-    """
-    Process a single indicator:
-    1. Convert Pine to Python
-    2. Run backtest
-    3. Save results
-    """
-    indicator_name = indicator.get("name", "Unknown")
-    print(f"\n{'='*50}")
-    print(f"Processing: {indicator_name}")
-    print(f"{'='*50}")
+def run_strategy_test(strategy_name, interval="1h", days=365):
+    """Run a single strategy test"""
+    print(f"\n{'='*60}")
+    print(f"Testing: {strategy_name} on {interval}")
+    print(f"{'='*60}")
     
-    # For now, generate test signals
-    # In production, this would use the converted Pine code
-    try:
-        # Fetch BTC data (cache it)
-        df_file = "data/btc_data.csv"
-        if os.path.exists(df_file):
-            import pandas as pd
-            df = pd.read_csv(df_file, index_col=0, parse_dates=True)
-            print(f"Loaded BTC data from cache: {len(df)} candles")
-        else:
-            print("Fetching BTC data from Binance...")
-            df = fetch_btc_data(
-                symbol=CONFIG["symbol"],
-                interval=CONFIG["interval"],
-                days=365
-            )
-            if df is not None:
-                df.to_csv(df_file)
-                print(f"Cached BTC data")
-        
-        if df is None:
-            print("Failed to get BTC data, skipping")
-            return None
-        
-        # Generate simple test signals (SMA crossover)
+    # Fetch data
+    df_file = f"data/btc_{interval}.csv"
+    if os.path.exists(df_file):
         import pandas as pd
-        df["sma_20"] = df["close"].rolling(20).mean()
-        df["sma_50"] = df["close"].rolling(50).mean()
-        
-        signals = pd.Series(0, index=df.index)
-        signals[df["sma_20"] > df["sma_50"]] = 1   # Buy signal
-        signals[df["sma_20"] <= df["sma_50"]] = -1  # Sell signal
-        
-        # Run backtest
-        results = run_backtest(df, signals, CONFIG["capital"])
-        
-        print(f"Results: ROI={results['total_return_pct']:.2f}%, "
-              f"Drawdown={results['max_drawdown_pct']:.2f}%, "
-              f"Sharpe={results['sharpe_ratio']:.2f}")
-        
-        # Save results
-        save_results(results, indicator_name)
-        
-        return results
-        
-    except Exception as e:
-        print(f"Error processing {indicator_name}: {e}")
+        df = pd.read_csv(df_file, index_col=0, parse_dates=True)
+        print(f"Loaded {len(df)} candles from cache")
+    else:
+        print(f"Fetching {interval} data from Binance...")
+        df = fetch_btc_data(
+            symbol=CONFIG["symbol"],
+            interval=interval,
+            days=days
+        )
+        if df is not None:
+            df.to_csv(df_file)
+            print(f"Cached data to {df_file}")
+    
+    if df is None:
+        print("Failed to get data")
         return None
+    
+    # Run strategy
+    results = run_strategy(strategy_name, df, CONFIG["capital"])
+    
+    print(f"\nResults:")
+    print(f"  ROI: {results['total_return_pct']:+.2f}%")
+    print(f"  Drawdown: {results['max_drawdown_pct']:.2f}%")
+    print(f"  Sharpe: {results['sharpe_ratio']:.2f}")
+    print(f"  Sortino: {results['sortino_ratio']:.2f}")
+    print(f"  Trades: {results['num_trades']}")
+    print(f"  Win Rate: {results['win_rate_pct']:.1f}%")
+    
+    return results
 
-def run_batch(limit=10):
-    """Process a batch of indicators"""
-    indicators = load_indicators()
+
+def run_multi_strategy_test(interval="1h", days=365):
+    """Run all strategies and find the best one"""
+    print(f"\n{'='*60}")
+    print(f"Running all strategies on {interval}")
+    print(f"{'='*60}")
     
-    # Filter to get usable indicators
-    usable = [ind for ind in indicators if ind.get("type") == "script|pine"]
-    usable = usable[:limit]
+    # Fetch data
+    df_file = f"data/btc_{interval}.csv"
+    if os.path.exists(df_file):
+        import pandas as pd
+        df = pd.read_csv(df_file, index_col=0, parse_dates=True)
+        print(f"Loaded {len(df)} candles from cache")
+    else:
+        print(f"Fetching {interval} data from Binance...")
+        df = fetch_btc_data(
+            symbol=CONFIG["symbol"],
+            interval=interval,
+            days=days
+        )
+        if df is not None:
+            df.to_csv(df_file)
     
-    print(f"\nProcessing {len(usable)} indicators...")
+    if df is None:
+        print("Failed to get data")
+        return []
     
-    results = []
-    for i, indicator in enumerate(usable):
-        print(f"\n[{i+1}/{len(usable)}]")
-        result = process_indicator(indicator)
-        if result:
-            results.append(result)
+    # Run all strategies
+    results = run_all_strategies(df, CONFIG["capital"])
+    
+    # Find best
+    if results:
+        best = max(results, key=lambda x: x['total_return_pct'])
+        print(f"\n{'='*60}")
+        print(f"BEST STRATEGY: {best['strategy']}")
+        print(f"ROI: {best['total_return_pct']:+.2f}%")
+        print(f"Sharpe: {best['sharpe_ratio']:.2f}")
+        print(f"Drawdown: {best['max_drawdown_pct']:.2f}%")
+        print(f"{'='*60}")
         
-        # Rate limiting
-        time.sleep(1)
+        # Save best result
+        save_results(best, f"best_{interval}")
     
-    print(f"\n{'='*50}")
-    print(f"Completed {len(results)} backtests")
-    print(f"{'='*50}")
+    return results
+
+
+def run_timeframe_comparison():
+    """Compare strategies across timeframes"""
+    intervals = ["15m", "1h", "4h", "1d"]
+    all_results = {}
+    
+    for interval in intervals:
+        print(f"\n{'#'*60}")
+        print(f"## Testing {interval} timeframe")
+        print(f"{'#'*60}")
+        
+        results = run_multi_strategy_test(interval=interval, days=180)
+        all_results[interval] = results
+        
+        time.sleep(1)  # Rate limit
     
     # Summary
-    if results:
-        avg_roi = sum(r["total_return_pct"] for r in results) / len(results)
-        best = max(results, key=lambda x: x["total_return_pct"])
-        print(f"Average ROI: {avg_roi:.2f}%")
-        print(f"Best: {best['indicator_name']} ({best['total_return_pct']:.2f}%)")
+    print(f"\n{'='*60}")
+    print("TIMEFRAME COMPARISON SUMMARY")
+    print(f"{'='*60}")
+    
+    for interval, results in all_results.items():
+        if results:
+            best = max(results, key=lambda x: x['total_return_pct'])
+            print(f"{interval:5s}: {best['strategy']:20s} ROI: {best['total_return_pct']:+8.2f}%  Sharpe: {best['sharpe_ratio']:6.2f}")
+    
+    return all_results
+
+
+def run_risk_management_test(strategy_name, interval="1h"):
+    """Test strategy with different risk management configs"""
+    df_file = f"data/btc_{interval}.csv"
+    if os.path.exists(df_file):
+        import pandas as pd
+        df = pd.read_csv(df_file, index_col=0, parse_dates=True)
+    else:
+        df = fetch_btc_data(symbol=CONFIG["symbol"], interval=interval, days=365)
+    
+    if df is None:
+        print("Failed to get data")
+        return []
+    
+    return run_with_risk_management(df, strategy_name, CONFIG["capital"])
+
 
 def main():
     """Main entry point"""
     import argparse
     
     parser = argparse.ArgumentParser(description="TradingView Bot")
-    parser.add_argument("--limit", type=int, default=10, help="Number of indicators to process")
-    parser.add_argument("--scrape", action="store_true", help="Force fresh scrape")
+    parser.add_argument("--strategy", type=str, help="Single strategy to test (see --list)")
+    parser.add_argument("--list", action="store_true", help="List available strategies")
+    parser.add_argument("--interval", type=str, default="1h", help="Timeframe (15m, 1h, 4h, 1d)")
+    parser.add_argument("--timeframes", action="store_true", help="Test all timeframes")
+    parser.add_argument("--risk-test", action="store_true", help="Test risk management")
+    parser.add_argument("--all", action="store_true", help="Run all tests")
     args = parser.parse_args()
     
-    if args.scrape:
-        print("Fresh scrape...")
-        indicators = get_indicators()
-        save_indicators(indicators)
+    if args.list:
+        print("\nAvailable strategies:")
+        for i, name in enumerate(STRATEGIES.keys(), 1):
+            print(f"  {i}. {name}")
+        return
     
-    run_batch(limit=args.limit)
+    if args.all:
+        # Run comprehensive test
+        print("Running comprehensive tests...")
+        run_timeframe_comparison()
+        
+        # Test risk management on best strategies
+        print("\n" + "="*60)
+        print("RISK MANAGEMENT TESTS")
+        print("="*60)
+        
+        for strategy in ['sma_crossover', 'macd', 'rsi']:
+            print(f"\n--- {strategy} ---")
+            run_risk_management_test(strategy, "1h")
+    elif args.timeframes:
+        run_timeframe_comparison()
+    elif args.risk_test:
+        if not args.strategy:
+            print("Please specify --strategy for risk management test")
+            return
+        run_risk_management_test(args.strategy, args.interval)
+    elif args.strategy:
+        run_strategy_test(args.strategy, args.interval)
+    else:
+        # Default: run all strategies on 1h
+        run_multi_strategy_test(args.interval)
+
 
 if __name__ == "__main__":
     main()
