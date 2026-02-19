@@ -33,14 +33,11 @@ Scrape TradingView community indicators → Convert Pine scripts to Python → B
 
 ## Usage
 ```bash
-# Scrape indicators
-python scraper.py
+# Run backtest
+python main.py
 
-# Convert and backtest
-python main.py --indicator <name> --pine-code <code>
-
-# Run all
-python run_all.py
+# Convert Pine script
+python converters/pine_converter.py
 ```
 
 ## Requirements
