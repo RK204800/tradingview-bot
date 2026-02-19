@@ -1,0 +1,2 @@
+indicator_name,python_filename,roi,drawdown,sharpe,sortino,expected_value,num_trades,timestamp
+test_indicator,test_indicator.py,-7.748215520651487,-17.026712690838018,-0.23946542514423474,-0.18960089019390447,-921.8159959407474,42,2026-02-18T17:57:25.059096
