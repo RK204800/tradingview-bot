@@ -80,6 +80,27 @@ plotshape(finalBullSignal, title="Bull Signal", location=location.belowbar, colo
 plotshape(finalBearSignal, title="Bear Signal", location=location.abovebar, color=color.red, 
      style=shape.triangledown, size=size.tiny, text="BEAR")
 
+// === HTF PATTERN LABELS (for analysis) ===
+// Label which HTF pattern triggered the trade
+var label htfLabel = label.new(bar_index, na, "", color=color.blue, textcolor=color.white, size=size.tiny)
+
+if (isHammer)
+    label.set_text(htfLabel, "HMR")
+    label.set_y(htfLabel, low)
+    label.set_yloc(htfLabel, yloc.belowbar)
+if (isBullEngulf)
+    label.set_text(htfLabel, "ENG")
+    label.set_y(htfLabel, low)
+    label.set_yloc(htfLabel, yloc.belowbar)
+if (isShootingStar)
+    label.set_text(htfLabel, "SST")
+    label.set_y(htfLabel, high)
+    label.set_yloc(htfLabel, yloc.abovebar)
+if (isBearEngulf)
+    label.set_text(htfLabel, "BEG")
+    label.set_y(htfLabel, high)
+    label.set_yloc(htfLabel, yloc.abovebar)
+
 // Background
 bgcolor(htfBull ? color.new(color.green, 90) : na)
 bgcolor(htfBear ? color.new(color.red, 90) : na)
