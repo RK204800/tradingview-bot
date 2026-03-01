@@ -1,0 +1,133 @@
+// HTF Reversal + RSI Divergence Strategy
+// Converted from Python version
+// @version=6
+
+strategy("HTF Reversal Divergence", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=2)
+
+// === INPUTS ===
+htfTimeframe = input.timeframe("15", "HTF Timeframe")
+rsiLength = input.int(14, "RSI Length")
+pivotLookback = input.int(3, "Pivot Lookback")
+atrMultiplier = input.float(1.5, "ATR Multiplier for SL")
+rrRatio = input.float(2.0, "Risk:Reward Ratio")
+minRR = input.float(1.5, "Minimum RR to Enter")
+
+// === HTF DATA ===
+[hO, hH, hL, hC, hO1, hC1] = request.security(syminfo.tickerid, htfTimeframe, [open, high, low, close, open[1], close[1]], lookahead=barmerge.lookahead_on)
+
+// HTF Reversal Patterns
+bodySize = math.abs(hC - hO)
+totalRange = hH - hL
+upperWick = hH - math.max(hC, hO)
+lowerWick = math.min(hC, hO) - hL
+
+isHammer = bodySize < totalRange * 0.33 and lowerWick > bodySize * 2 and upperWick < bodySize
+isBullEngulf = hC > hO1 and hO < hC1 and hC > hO
+isShootingStar = bodySize < totalRange * 0.33 and upperWick > bodySize * 2 and lowerWick < bodySize
+isBearEngulf = hC < hO1 and hO > hC1 and hC < hO
+
+htfBull = isHammer or isBullEngulf
+htfBear = isShootingStar or isBearEngulf
+
+// === RSI DIVERGENCE ON 1M ===
+rsiVal = ta.rsi(close, rsiLength)
+pLo = ta.pivotlow(rsiVal, pivotLookback, pivotLookback)
+pHi = ta.pivothigh(rsiVal, pivotLookback, pivotLookback)
+
+var float lastPLoRsi = na
+var float lastPLoPrice = na
+var int lastPLoIdx = na
+var float lastPHiRsi = na
+var float lastPHiPrice = na
+var int lastPHiIdx = na
+
+bullDiv = false
+bearDiv = false
+
+if not na(pLo)
+    if rsiVal[pivotLookback] > lastPLoRsi and low[pivotLookback] < lastPLoPrice
+        bullDiv := true
+    lastPLoRsi := rsiVal[pivotLookback]
+    lastPLoPrice := low[pivotLookback]
+    lastPLoIdx := bar_index[pivotLookback]
+
+if not na(pHi)
+    if rsiVal[pivotLookback] < lastPHiRsi and high[pivotLookback] > lastPHiPrice
+        bearDiv := true
+    lastPHiRsi := rsiVal[pivotLookback]
+    lastPHiPrice := high[pivotLookback]
+    lastPHiIdx := bar_index[pivotLookback]
+
+// === FINAL SIGNALS ===
+finalBullSignal = bullDiv and htfBull
+finalBearSignal = bearDiv and htfBear
+
+// === ATR FOR STOP LOSS ===
+atrValue = ta.atr(14)
+stopDistance = atrValue * atrMultiplier
+
+// Entry prices
+longEntry = close
+longStop = close - stopDistance
+longTarget = close + (stopDistance * rrRatio)
+
+// Calculate RR
+actualRR = (longTarget - longEntry) / stopDistance
+
+// === PLOTS ===
+plotshape(finalBullSignal, title="Bull Signal", location=location.belowbar, color=color.green, 
+     style=shape.triangleup, size=size.tiny, text="BULL")
+plotshape(finalBearSignal, title="Bear Signal", location=location.abovebar, color=color.red, 
+     style=shape.triangledown, size=size.tiny, text="BEAR")
+
+// Background
+bgcolor(htfBull ? color.new(color.green, 90) : na)
+bgcolor(htfBear ? color.new(color.red, 90) : na)
+
+// === ENTRIES ===
+if (finalBullSignal and actualRR >= minRR)
+    stopLoss = close - stopDistance
+    takeProfit = close + (stopDistance * rrRatio)
+    strategy.entry("Long", strategy.long, stop=stopLoss, limit=takeProfit)
+    
+if (finalBearSignal and actualRR >= minRR)
+    stopLoss = close + stopDistance
+    takeProfit = close - (stopDistance * rrRatio)
+    strategy.entry("Short", strategy.short, stop=stopLoss, limit=takeProfit)
+
+// === PLOTTING STOP LOSS AND TARGET ===
+plot(longStop, title="Stop Loss", color=color.red, linewidth=1, style=plot.style_line)
+plot(longTarget, title="Target", color=color.green, linewidth=1, style=plot.style_line)
+
+// === INFO TABLE ===
+var table infoTable = table.new(position.top_right, 4, 2, bgcolor=color.new(color.gray, 90), frame_width=1, frame_color=color.gray)
+
+if barstate.islast
+    table.cell(infoTable, 0, 0, "Signal", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 1, 0, "Price", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 2, 0, "SL", text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 3, 0, "TP", text_color=color.white, text_size=size.small)
+    
+    signalText = finalBullSignal ? "LONG" : finalBearSignal ? "SHORT" : "None"
+    signalColor = finalBullSignal ? color.lime : finalBearSignal ? color.red : color.gray
+    
+    table.cell(infoTable, 0, 1, signalText, text_color=signalColor, text_size=size.small)
+    table.cell(infoTable, 1, 1, str.tostring(close, "#.00"), text_color=color.white, text_size=size.small)
+    table.cell(infoTable, 2, 1, str.tostring(longStop, "#.00"), text_color=color.red, text_size=size.small)
+    table.cell(infoTable, 3, 1, str.tostring(longTarget, "#.00"), text_color=color.lime, text_size=size.small)
+
+// === DAILY EXIT AT 4:03 PM EST ===
+exitHour = 16
+exitMinute = 3
+
+// Check if it's around 4:03 PM (within a 3-bar window)
+isExitTime = (hour == exitHour and minute >= exitMinute and minute <= exitMinute + 2)
+
+// Close all positions at exit time
+if (isExitTime and strategy.position_size != 0)
+    strategy.close_all(comment="Daily Exit")
+
+// === ALERTS ===
+alertcondition(finalBullSignal, title="Long Signal", message="HTF Reversal LONG Signal")
+alertcondition(finalBearSignal, title="Short Signal", message="HTF Reversal SHORT Signal")
+alertcondition(isExitTime and strategy.position_size != 0, title="Daily Exit", message="Closing all positions at 4:03 PM EST")
