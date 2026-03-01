@@ -2,7 +2,7 @@
 // Converted from Python version
 // @version=6
 
-strategy("HTF Reversal Divergence", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=2)
+strategy("HTF Reversal Divergence", overlay=true, default_qty_type=strategy.fixed, default_qty_value=1)
 
 // === INPUTS ===
 htfTimeframe = input.timeframe("15", "HTF Timeframe")

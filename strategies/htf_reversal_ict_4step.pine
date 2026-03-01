@@ -1,0 +1,298 @@
+// HTF Reversal + RSI Divergence + ICT Supply Demand 4-Step Strategy
+// Combines: HTF Reversal Patterns, RSI Divergence, ICT Order Block, FVG, Liquidity Sweep, MSB
+// @version=6
+
+strategy("HTF Reversal ICT 4-Step", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=2)
+
+// ============================================
+// INPUTS
+// ============================================
+
+// HTF Settings
+htfTimeframe = input.timeframe("15", "HTF Timeframe")
+
+// RSI Settings
+rsiLength = input.int(14, "RSI Length")
+pivotLookback = input.int(3, "Pivot Lookback")
+
+// ATR for SL
+atrMultiplier = input.float(1.5, "ATR Multiplier for SL")
+
+// Risk:Reward
+rrRatio = input.float(3.0, "Risk:Reward Ratio")
+minRR = input.float(1.5, "Minimum RR to Enter")
+
+// ICT 4-Step Settings
+lookbackBars = input.int(50, "Order Block Lookback")
+fvgStrength = input.float(0.5, "FVG Strength (% of candle)")
+liqSweepLookback = input.int(20, "Liquidity Sweep Lookback")
+msbLookback = input.int(10, "MSB Lookback")
+
+// Daily Exit
+exitHour = input.int(16, "Daily Exit Hour (EST)")
+exitMinute = input.int(3, "Daily Exit Minute")
+
+// ============================================
+// STEP 1: ORDER BLOCK (OB) - Institutional Order Zones
+// ============================================
+
+// Bullish OB: Bear candle followed by Bull candle, low of bear candle
+var float[] bullOBs = array.new_float(10, na)
+var float[] bearOBs = array.new_float(10, na)
+var int[] bullOBIndices = array.new_int(10, na)
+var int[] bearOBIndices = array.new_int(10, na)
+
+// Find Order Blocks
+isBearCandle = close[1] < open[1]
+isBullCandle = close > open
+
+bullishOB = isBearCandle and isBullCandle and low < low[1]
+bearishOB = isBullCandle and isBearCandle and high > high[1]
+
+if (bullishOB)
+    array.unshift(bullOBs, low[1])
+    array.unshift(bullOBIndices, bar_index[1])
+    array.pop(bullOBs)
+    array.pop(bullOBIndices)
+
+if (bearishOB)
+    array.unshift(bearOBs, high[1])
+    array.unshift(bearOBIndices, bar_index[1])
+    array.pop(bearOBs)
+    array.pop(bearOBIndices)
+
+// Check if price is in OB zone
+priceInBullOB = false
+priceInBearOB = false
+
+for i = 0 to array.size(bullOBs) - 1
+    obPrice = array.get(bullOBs, i)
+    if not na(obPrice) and close > obPrice and close < obPrice + (syminfo.mintick * 100)
+        priceInBullOB := true
+
+for i = 0 to array.size(bearOBs) - 1
+    obPrice = array.get(bearOBs, i)
+    if not na(obPrice) and close < obPrice and close > obPrice - (syminfo.mintick * 100)
+        priceInBearOB := true
+
+// ============================================
+// STEP 2: FAIR VALUE GAP (FVG) - Momentum Continuation
+// ============================================
+
+// FVG: Gap between candle N and N-2 (middle candle doesn't overlap)
+fvgBull = (low[2] > high[1]) and (low[1] > high)
+fvgBear = (high[2] < low[1]) and (high[1] < low)
+
+var float[] bullFVGs = array.new_float(5, na)
+var float[] bearFVGs = array.new_float(5, na)
+
+if fvgBull
+    fvgTop = high
+    fvgBottom = low[2]
+    array.unshift(bullFVGs, fvgBottom)
+    array.pop(bullFVGs)
+
+if fvgBear
+    fvgTop = low[2]
+    fvgBottom = high
+    array.unshift(bearFVGs, fvgTop)
+    array.pop(bearFVGs)
+
+// ============================================
+// STEP 3: LIQUIDITY SWEEP - Stop Hunt Detection
+// ============================================
+
+// Liquidity Sweep: Price takes out recent highs (stop hunt)
+highestHigh = ta.highest(high, liqSweepLookback)
+lowestLow = ta.lowest(low, liqSweepLookback)
+
+liquiditySweepUp = close > highestHigh[1] and close[1] < highestHigh[1]
+liquiditySweepDown = close < lowestLow[1] and close[1] > lowestLow[1]
+
+// ============================================
+// STEP 4: MARKET STRUCTURE BREAK (MSB) - Trend Confirmation
+// ============================================
+
+// MSB: Price breaks structure in direction of trade
+swingHigh = ta.pivothigh(high, msbLookback, msbLookback)
+swingLow = ta.pivotlow(low, msbLookback, msbLookback)
+
+var float lastSwingHigh = na
+var float lastSwingLow = na
+
+if not na(swingHigh)
+    lastSwingHigh := high[msbLookback]
+
+if not na(swingLow)
+    lastSwingLow := low[msbLookback]
+
+msbBull = close > lastSwingHigh and close > lastSwingHigh[1]
+msbBear = close < lastSwingLow and close < lastSwingLow[1]
+
+// ============================================
+// HTF REVERSAL PATTERNS
+// ============================================
+
+[hO, hH, hL, hC, hO1, hC1] = request.security(syminfo.tickerid, htfTimeframe, [open, high, low, close, open[1], close[1]], lookahead=barmerge.lookahead_on)
+
+bodySize = math.abs(hC - hO)
+totalRange = hH - hL
+upperWick = hH - math.max(hC, hO)
+lowerWick = math.min(hC, hO) - hL
+
+isHammer = bodySize < totalRange * 0.33 and lowerWick > bodySize * 2 and upperWick < bodySize
+isBullEngulf = hC > hO1 and hO < hC1 and hC > hO
+isShootingStar = bodySize < totalRange * 0.33 and upperWick > bodySize * 2 and lowerWick < bodySize
+isBearEngulf = hC < hO1 and hO > hC1 and hC < hO
+
+htfBull = isHammer or isBullEngulf
+htfBear = isShootingStar or isBearEngulf
+
+// ============================================
+// RSI DIVERGENCE
+// ============================================
+
+rsiVal = ta.rsi(close, rsiLength)
+pLo = ta.pivotlow(rsiVal, pivotLookback, pivotLookback)
+pHi = ta.pivothigh(rsiVal, pivotLookback, pivotLookback)
+
+var float lastPLoRsi = na
+var float lastPLoPrice = na
+var float lastPHiRsi = na
+var float lastPHiPrice = na
+
+bullDiv = false
+bearDiv = false
+
+if not na(pLo)
+    if rsiVal[pivotLookback] > lastPLoRsi and low[pivotLookback] < lastPLoPrice
+        bullDiv := true
+    lastPLoRsi := rsiVal[pivotLookback]
+    lastPLoPrice := low[pivotLookback]
+
+if not na(pHi)
+    if rsiVal[pivotLookback] < lastPHiRsi and high[pivotLookback] > lastPHiPrice
+        bearDiv := true
+    lastPHiRsi := rsiVal[pivotLookback]
+    lastPHiPrice := high[pivotLookback]
+
+// ============================================
+// COMBINE ALL 4 STEPS + HTF + RSI DIVERGENCE
+// ============================================
+
+// LONG: FVG + OB + MSB + (optional: HTF Bull + RSI Divergence)
+longSignal = fvgBull and priceInBullOB and msbBull and (htfBull or bullDiv)
+
+// SHORT: FVG + OB + MSB + (optional: HTF Bear + RSI Divergence)
+shortSignal = fvgBear and priceInBearOB and msbBear and (htfBear or bearDiv)
+
+// ============================================
+// ATR FOR STOP LOSS
+// ============================================
+
+atrValue = ta.atr(14)
+stopDistance = atrValue * atrMultiplier
+
+longEntry = close
+longStop = close - stopDistance
+longTarget = close + (stopDistance * rrRatio)
+
+shortEntry = close
+shortStop = close + stopDistance
+shortTarget = close - (stopDistance * rrRatio)
+
+actualRRLong = (longTarget - longEntry) / stopDistance
+actualRRShort = (shortEntry - shortStop) / stopDistance
+
+// ============================================
+// PLOTS - 4-Step Visual Confirmation
+// ============================================
+
+// Order Blocks
+plotshape(bullishOB, title="Bull OB", location=location.belowbar, color=color.blue, style=shape.square, size=size.tiny, textcolor=color.white, text="OB")
+plotshape(bearishOB, title="Bear OB", location=location.abovebar, color=color.orange, style=shape.square, size=size.tiny, textcolor=color.white, text="OB")
+
+// FVG Zones
+plot(fvgBull ? low[1] : na, title="Bull FVG", color=color.green, linewidth=2, style=plot.style_line)
+plot(fvgBear ? high[1] : na, title="Bear FVG", color=color.red, linewidth=2, style=plot.style_line)
+
+// Liquidity Sweeps
+plotshape(liquiditySweepUp, title="Liq Sweep Up", location=location.abovebar, color=color.purple, style=shape.triangledown, size=size.tiny, text="LIQ")
+plotshape(liquiditySweepDown, title="Liq Sweep Down", location=location.belowbar, color=color.purple, style=shape.triangleup, size=size.tiny, text="LIQ")
+
+// MSB
+plotshape(msbBull, title="MSB Bull", location=location.belowbar, color=color.lime, style=shape.triangleup, size=size.small, text="MSB")
+plotshape(msbBear, title="MSB Bear", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.small, text="MSB")
+
+// Final Signals
+plotshape(longSignal, title="LONG Signal", location=location.belowbar, color=color.green, style=shape.triangleup, size=size.normal, text="LONG\n4-STEP")
+plotshape(shortSignal, title="SHORT Signal", location=location.abovebar, color=color.red, style=shape.triangledown, size=size.normal, text="SHORT\n4-STEP")
+
+// Background highlighting
+bgcolor(longSignal ? color.new(color.green, 80) : shortSignal ? color.new(color.red, 80) : na)
+
+// ============================================
+// ENTRIES
+// ============================================
+
+if (longSignal and actualRRLong >= minRR)
+    strategy.entry("Long", strategy.long, stop=longStop, limit=longTarget)
+    
+if (shortSignal and actualRRShort >= minRR)
+    strategy.entry("Short", strategy.short, stop=shortStop, limit=shortTarget)
+
+// ============================================
+// PLOT SL AND TARGET
+// ============================================
+
+plot(strategy.position_size > 0 ? longStop : na, title="SL", color=color.red, linewidth=1)
+plot(strategy.position_size > 0 ? longTarget : na, title="TP", color=color.green, linewidth=1)
+plot(strategy.position_size < 0 ? shortStop : na, title="SL", color=color.red, linewidth=1)
+plot(strategy.position_size < 0 ? shortTarget : na, title="TP", color=color.green, linewidth=1)
+
+// ============================================
+// 4-STEP INFO TABLE
+// ============================================
+
+var table stepTable = table.new(position.top_right, 6, 3, bgcolor=color.new(color.gray, 90), frame_width=1, frame_color=color.gray)
+
+if barstate.islast
+    table.cell(stepTable, 0, 0, "Step", text_color=color.white, text_size=size.small)
+    table.cell(stepTable, 1, 0, "OB", text_color=color.white, text_size=size.small)
+    table.cell(stepTable, 2, 0, "FVG", text_color=color.white, text_size=size.small)
+    table.cell(stepTable, 3, 0, "LIQ", text_color=color.white, text_size=size.small)
+    table.cell(stepTable, 4, 0, "MSB", text_color=color.white, text_size=size.small)
+    table.cell(stepTable, 5, 0, "Signal", text_color=color.white, text_size=size.small)
+    
+    // Long row
+    table.cell(stepTable, 0, 1, "LONG", text_color=color.green, text_size=size.small)
+    table.cell(stepTable, 1, 1, priceInBullOB ? "✓" : "✗", text_color=priceInBullOB ? color.green : color.red, text_size=size.small)
+    table.cell(stepTable, 2, 1, fvgBull ? "✓" : "✗", text_color=fvgBull ? color.green : color.red, text_size=size.small)
+    table.cell(stepTable, 3, 1, liquiditySweepDown ? "✓" : "-", text_color=color.gray, text_size=size.small)
+    table.cell(stepTable, 4, 1, msbBull ? "✓" : "✗", text_color=msbBull ? color.green : color.red, text_size=size.small)
+    table.cell(stepTable, 5, 1, longSignal ? "✓✓✓" : "-", text_color=longSignal ? color.green : color.gray, text_size=size.small)
+    
+    // Short row
+    table.cell(stepTable, 0, 2, "SHORT", text_color=color.red, text_size=size.small)
+    table.cell(stepTable, 1, 1, priceInBearOB ? "✓" : "✗", text_color=priceInBearOB ? color.orange : color.red, text_size=size.small)
+    table.cell(stepTable, 2, 2, fvgBear ? "✓" : "✗", text_color=fvgBear ? color.red : color.gray, text_size=size.small)
+    table.cell(stepTable, 3, 2, liquiditySweepUp ? "✓" : "-", text_color=color.gray, text_size=size.small)
+    table.cell(stepTable, 4, 2, msbBear ? "✓" : "✗", text_color=msbBear ? color.red : color.gray, text_size=size.small)
+    table.cell(stepTable, 5, 2, shortSignal ? "✓✓✓" : "-", text_color=shortSignal ? color.red : color.gray, text_size=size.small)
+
+// ============================================
+// DAILY EXIT AT 4:03 PM EST
+// ============================================
+
+isExitTime = (hour == exitHour and minute >= exitMinute and minute <= exitMinute + 2)
+
+if (isExitTime and strategy.position_size != 0)
+    strategy.close_all(comment="Daily Exit")
+
+// ============================================
+// ALERTS
+// ============================================
+
+alertcondition(longSignal, title="LONG 4-Step", message="HTF Reversal ICT LONG - OB+FVG+MSB")
+alertcondition(shortSignal, title="SHORT 4-Step", message="HTF Reversal ICT SHORT - OB+FVG+MSB")
+alertcondition(isExitTime and strategy.position_size != 0, title="Daily Exit", message="Closing all positions")

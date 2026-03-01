@@ -2,7 +2,7 @@
 // Based on backtest analysis: Hammer + RSI Oversold + EMA Trend
 // @version=6
 
-strategy("HTF Reversal OPTIMIZED", overlay=true, default_qty_type=strategy.percent_of_equity, default_qty_value=2)
+strategy("HTF Reversal OPTIMIZED", overlay=true, default_qty_type=strategy.fixed, default_qty_value=1)
 
 // === INPUTS ===
 rsiLength = input.int(14, "RSI Length")
@@ -14,7 +14,7 @@ emaFast = input.int(20, "EMA Fast Period")
 emaSlow = input.int(50, "EMA Slow Period")
 
 // RSI Oversold Level
-rsi Oversold = input.int(35, "RSI Oversold Level")
+rsiOversoldLevel = input.int(35, "RSI Oversold Level")
 
 // === RSI ===
 rsiVal = ta.rsi(close, rsiLength)
