@@ -1,0 +1,142 @@
+// RSI Divergence Strategy
+// Higher Timeframe Confirmation + RSI Divergence
+// @version=5
+// @author=JetStream Trading
+// NQ/ES Futures - 5min timeframe
+
+strategy("RSI Divergence Strategy", 
+     overlay=true, 
+     default_qty_type=strategy.percent_of_equity,
+     default_qty_value=1,
+     commission_type=strategy.commission.cash_per_contract,
+     commission_value=2.09)
+
+// ============================================
+// INPUTS
+// ============================================
+
+rsiLength = input.int(14, title="RSI Length", group="RSI Settings")
+atrLength = input.int(14, title="ATR Length", group="Risk Management")
+stopMult = input.float(2.0, title="Stop Multiplier (ATR)", group="Risk Management")
+targetMult = input.float(4.0, title="Target Multiplier (R)", group="Risk Management")
+pivotLookback = input.int(3, title="Pivot Lookback", group="Pivot Settings")
+
+useHTF = input.bool(true, title="Use HTF Filter", group="HTF Settings")
+htfTimeframe = input.timeframe("15", title="HTF Timeframe", group="HTF Settings")
+
+// ============================================
+// INDICATORS
+// ============================================
+
+// RSI
+rsi = ta.rsi(close, rsiLength)
+
+// ATR for stops
+atr = ta.atr(atrLength)
+
+// Pivot points for divergence detection
+pivotLow = ta.pivotlow(low, pivotLookback, pivotLookback)
+pivotHigh = ta.pivothigh(high, pivotLookback, pivotLookback)
+
+// ============================================
+// DIVERGENCE DETECTION
+// ============================================
+
+var float lastPivotLowRSI = na
+var float lastPivotLowPrice = na
+var float lastPivotHighRSI = na
+var float lastPivotHighPrice = na
+
+bullishDivergence = false
+bearishDivergence = false
+
+if (not na(pivotLow))
+    if (not na(lastPivotLowRSI) and rsi > lastPivotLowRSI and low < lastPivotLowPrice)
+        bullishDivergence := true
+    lastPivotLowRSI := rsi
+    lastPivotLowPrice := low
+
+if (not na(pivotHigh))
+    if (not na(lastPivotHighRSI) and rsi < lastPivotHighRSI and high > lastPivotHighPrice)
+        bearishDivergence := true
+    lastPivotHighRSI := rsi
+    lastPivotHighPrice := high
+
+// ============================================
+// HTF FILTER (Optional)
+// ============================================
+
+htfClose = request.security(syminfo.tickerid, htfTimeframe, close[1])
+htfEMA = request.security(syminfo.tickerid, htfTimeframe, ta.ema(close, 20))
+
+trendUp = htfClose > htfEMA
+
+// ============================================
+// ENTRY SIGNALS
+// ============================================
+
+longSignal = bullishDivergence and (not useHTF or trendUp)
+shortSignal = bearishDivergence and (not useHTF or not trendUp)
+
+// ============================================
+// TRADE EXECUTION
+// ============================================
+
+if (longSignal and strategy.position_size == 0)
+    entryPrice = close
+    stopPrice = close - atr * stopMult
+    targetPrice = close + atr * stopMult * targetMult
+    
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", "Long", stop=stopPrice, limit=targetPrice)
+
+if (shortSignal and strategy.position_size == 0)
+    entryPrice = close
+    stopPrice = close + atr * stopMult
+    targetPrice = close - atr * stopMult * targetMult
+    
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", "Short", stop=stopPrice, limit=targetPrice)
+
+// ============================================
+// PLOTTING
+// ============================================
+
+// Plot signals
+plotshape(longSignal, title="Long Signal", location=location.belowbar, 
+     color=color.green, style=shape.triangleup, size=size.tiny, text="LONG")
+plotshape(shortSignal, title="Short Signal", location=location.abovebar, 
+     color=color.red, style=shape.triangledown, size=size.tiny, text="SHORT")
+
+// Plot pivots
+plot(pivotLow, title="Pivot Low", color=color.blue, linewidth=2, offset=-pivotLookback)
+plot(pivotHigh, title="Pivot High", color=color.orange, linewidth=2, offset=-pivotLookback)
+
+// Plot RSI
+plot(rsi, title="RSI", color=color.purple, linewidth=2)
+hline(30, "RSI Oversold", color=color.gray, linestyle=hline.style_dashed)
+hline(70, "RSI Overbought", color=color.gray, linestyle=hline.style_dashed)
+
+// Plot trend
+plot(useHTF ? htfEMA : na, title="HTF Trend", color=color.blue, linewidth=2)
+
+// ============================================
+// ALERTS
+// ============================================
+
+alertcondition(longSignal, title="Long Signal Alert", message="RSI Bullish Divergence - LONG")
+alertcondition(shortSignal, title="Short Signal Alert", message="RSI Bearish Divergence - SHORT")
+
+// ============================================
+// INFO PANEL
+// ============================================
+
+var table infoTable = table.new(position.top_right, 2, 2, frame=color.gray, frame_width=1)
+
+if (barstate.islast)
+    table.cell(infoTable, 0, 0, "RSI:", text_color=color.white)
+    table.cell(infoTable, 1, 0, str.tostring(rsi, "#.00"), text_color=color.yellow)
+    table.cell(infoTable, 0, 1, "Div:", text_color=color.white)
+    divText = bullishDivergence ? "BULLISH" : (bearishDivergence ? "BEARISH" : "NONE")
+    divColor = bullishDivergence ? color.green : (bearishDivergence ? color.red : color.gray)
+    table.cell(infoTable, 1, 1, divText, text_color=divColor)
