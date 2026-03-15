@@ -71,6 +71,32 @@ def fetch_btc_data(symbol="BTCUSDT", interval="1h", days=365):
 
 # ==================== STRATEGIES ====================
 
+# Import custom strategies
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent / "strategies"))
+
+try:
+    from htf_reversal_divergence import HTFReversalDivergence
+    HTF_STRATEGY_AVAILABLE = True
+except ImportError:
+    HTF_STRATEGY_AVAILABLE = False
+    print("Warning: htf_reversal_divergence strategy not available")
+
+
+def strategy_htf_reversal(df):
+    """
+    HTF Reversal & RSI Divergence Strategy
+    Based on LuxAlgo's TradingView indicator
+    """
+    if not HTF_STRATEGY_AVAILABLE:
+        return pd.Series(0, index=df.index)
+    
+    strategy = HTFReversalDivergence(htf_timeframe="15", rsi_length=14, pivot_lookback=3)
+    result = strategy.generate_signals(df)
+    return result['signal']
+
+
 def calculate_indicators(df):
     """Calculate all technical indicators"""
     result = df.copy()
@@ -258,6 +284,7 @@ STRATEGIES = {
     'combo_ma_rsi': strategy_combo_ma_rsi,
     'macd_rsi': strategy_macd_rsi,
     'triple_ma': strategy_triple_ma,
+    'htf_reversal': strategy_htf_reversal,
 }
 
 
